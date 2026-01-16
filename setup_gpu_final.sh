@@ -1,16 +1,17 @@
 #!/bin/bash
 # ============================================================
-# FINAL PRODUCTION GPU Setup Script for Photo Validation API
+# FIXED PRODUCTION GPU Setup Script for Photo Validation API
 # Target: NVIDIA L40S with CUDA 12.x, Python 3.12.3
 #
-# KEY FIX: Install NVIDIA CUDA libraries via pip so onnxruntime-gpu
-# can find them without system-level configuration
+# KEY FIX: 
+# 1. Install NVIDIA CUDA libraries via pip so onnxruntime-gpu can find them
+# 2. Install NumPy 1.x BEFORE onnxruntime-gpu (critical!)
 # ============================================================
 
 set -e  # Exit on error
 
 echo "============================================================"
-echo "Photo Validation GPU Setup - FINAL PRODUCTION VERSION"
+echo "Photo Validation GPU Setup - FIXED VERSION"
 echo "All models will run on GPU (InsightFace + DeepFace)"
 echo "============================================================"
 
@@ -58,11 +59,10 @@ pip install --upgrade pip setuptools wheel
 print_status "Virtual environment created"
 
 # Step 3: Install NVIDIA CUDA libraries via pip (CRITICAL!)
-# These provide the CUDA runtime libraries that onnxruntime-gpu needs
 echo ""
 echo "Step 3: Installing NVIDIA CUDA libraries via pip..."
 echo "------------------------------------------------------------"
-echo "This is the KEY FIX - provides CUDA libraries for ONNX Runtime"
+echo "This provides CUDA runtime libraries for ONNX Runtime GPU"
 
 pip install nvidia-cuda-runtime-cu12==12.4.127
 pip install nvidia-cudnn-cu12==9.1.0.70
@@ -94,23 +94,34 @@ export LD_LIBRARY_PATH="${NVIDIA_LIB_PATH}:${LD_LIBRARY_PATH}"
 print_status "LD_LIBRARY_PATH updated with NVIDIA pip packages"
 echo "  NVIDIA libs: $NVIDIA_LIB_PATH"
 
-# Step 4: Install NumPy 1.x FIRST (required for onnxruntime-gpu 1.18.0)
+# Step 4: Install NumPy 1.x FIRST (CRITICAL - onnxruntime-gpu compatibility)
 echo ""
-echo "Step 4: Installing NumPy 1.x (onnxruntime-gpu compatibility)..."
+echo "Step 4: Installing NumPy 1.x (onnxruntime-gpu requires this)..."
 echo "------------------------------------------------------------"
 
-# onnxruntime-gpu 1.18.0 was compiled with NumPy 1.x and crashes with NumPy 2.x
-pip install numpy==1.26.0
+# onnxruntime-gpu 1.18.0 was compiled with NumPy 1.x and CRASHES with NumPy 2.x
+pip install "numpy>=1.24.0,<2.0.0"
 
-print_status "NumPy 1.x installed"
+NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)")
+print_status "NumPy $NUMPY_VERSION installed (must be 1.x)"
 
-# Step 5: Install ONNX Runtime GPU
+if [[ "$NUMPY_VERSION" == 2.* ]]; then
+    print_error "NumPy 2.x detected! This will break onnxruntime-gpu!"
+    exit 1
+fi
+
+# Step 5: Install ONNX Runtime GPU (with --no-deps to prevent NumPy 2.x)
 echo ""
 echo "Step 5: Installing ONNX Runtime GPU..."
 echo "------------------------------------------------------------"
 
-# Use version 1.18.0 which has good CUDA 12 support
-pip install onnxruntime-gpu==1.18.0
+# Install without dependencies to prevent NumPy upgrade
+pip install onnxruntime-gpu==1.18.0 --no-deps
+
+# Install onnxruntime-gpu dependencies manually (avoiding NumPy)
+pip install coloredlogs flatbuffers packaging protobuf sympy
+
+print_status "ONNX Runtime GPU installed"
 
 # Verify CUDA provider is available
 echo ""
@@ -118,9 +129,9 @@ echo "Verifying ONNX Runtime CUDA provider..."
 python3 << 'EOF'
 import os
 import sys
+import site
 
 # Set up library path for NVIDIA pip packages
-import site
 site_packages = site.getsitepackages()[0]
 nvidia_libs = []
 for pkg in ['cuda_runtime', 'cudnn', 'cublas', 'cufft', 'curand', 'cusolver', 'cusparse', 'nccl']:
@@ -132,49 +143,47 @@ current_ld = os.environ.get('LD_LIBRARY_PATH', '')
 os.environ['LD_LIBRARY_PATH'] = ':'.join(nvidia_libs) + ':' + current_ld
 
 import onnxruntime as ort
-providers = ort.get_available_providers()
+import numpy as np
+
 print(f'ONNX Runtime version: {ort.__version__}')
+print(f'NumPy version: {np.__version__}')
+
+if np.__version__.startswith('2.'):
+    print('[ERROR] NumPy 2.x detected! This will cause crashes!')
+    sys.exit(1)
+
+providers = ort.get_available_providers()
 print(f'Available providers: {providers}')
 
 if 'CUDAExecutionProvider' in providers:
     print('[OK] CUDA provider available!')
+    sys.exit(0)
 else:
-    print('[WARNING] CUDA provider not available yet')
-    print('Will try TensorRT provider installation...')
+    print('[WARNING] CUDA provider not available')
+    print('This may be a driver or CUDA library issue')
     sys.exit(1)
 EOF
 
 ONNX_STATUS=$?
 if [ $ONNX_STATUS -ne 0 ]; then
-    print_warning "ONNX Runtime CUDA not detected with pip packages alone"
-    print_warning "Trying additional approaches..."
-
-    # Try installing onnxruntime-gpu with different version
-    pip uninstall -y onnxruntime-gpu onnxruntime 2>/dev/null || true
-
-    # Try version 1.17.1 which might have better compatibility
-    pip install onnxruntime-gpu==1.17.1
-
-    # Verify again
-    python3 << 'EOF'
-import onnxruntime as ort
-providers = ort.get_available_providers()
-print(f'Providers after reinstall: {providers}')
-if 'CUDAExecutionProvider' in providers:
-    print('[OK] CUDA provider now available!')
-else:
-    print('[INFO] CUDA provider still not available')
-    print('InsightFace will use CPU, but DeepFace will use TensorFlow GPU')
-EOF
+    print_error "ONNX Runtime GPU initialization failed"
+    echo ""
+    echo "Troubleshooting steps:"
+    echo "1. Check CUDA driver: nvidia-smi"
+    echo "2. Check CUDA toolkit: nvcc --version"
+    echo "3. Verify NVIDIA pip packages are installed"
+    echo "4. Check LD_LIBRARY_PATH includes NVIDIA pip package libs"
+    exit 1
 fi
 
-print_status "ONNX Runtime GPU installation complete"
+print_status "ONNX Runtime GPU verification passed"
 
 # Step 6: Install TensorFlow with GPU support
 echo ""
 echo "Step 6: Installing TensorFlow..."
 echo "------------------------------------------------------------"
 
+# TensorFlow 2.16.2 works well with CUDA 12.x
 pip install tensorflow==2.16.2
 pip install tf-keras
 
@@ -189,25 +198,23 @@ pip install insightface==0.7.3
 
 print_status "InsightFace installed"
 
-# Step 8: Install face detection/analysis libraries WITHOUT onnxruntime dependency
+# Step 8: Install face detection/analysis libraries
 echo ""
-echo "Step 8: Installing face detection libraries (--no-deps)..."
+echo "Step 8: Installing face detection libraries..."
 echo "------------------------------------------------------------"
 
-# DeepFace - install without deps to avoid CPU onnxruntime
+# DeepFace - install without deps to avoid dependency conflicts
 pip install --no-deps deepface==0.0.93
 
-# Install DeepFace's actual dependencies manually
+# Install DeepFace's dependencies manually
 pip install flask flask-cors fire gunicorn gdown retina-face mtcnn
 
 # RetinaFace and MTCNN
 pip install --no-deps retina-face==0.0.17 || true
 pip install --no-deps mtcnn==1.0.0 || true
 
-# NudeNet - install without deps
+# NudeNet
 pip install --no-deps nudenet==3.4.2
-
-# Manual NudeNet dependencies
 pip install pillow
 
 print_status "Face detection libraries installed"
@@ -229,7 +236,7 @@ pip install \
     python-multipart==0.0.20 \
     pydantic
 
-# Note: numpy already installed in Step 4, don't override with version 2.x
+# Install other dependencies (NumPy already installed in Step 4)
 pip install \
     pandas==2.2.3 \
     scipy==1.14.1 \
@@ -246,23 +253,21 @@ pip install \
 
 print_status "All dependencies installed"
 
-# Step 10: Ensure onnxruntime-gpu is intact (fix any overwrites)
+# Step 10: Verify NumPy version hasn't been upgraded
 echo ""
-echo "Step 10: Ensuring onnxruntime-gpu is intact..."
+echo "Step 10: Final NumPy version check..."
 echo "------------------------------------------------------------"
 
-# Check if CPU version was installed by any dependency
-ONNX_PKG=$(pip list | grep onnxruntime)
-echo "Installed ONNX packages: $ONNX_PKG"
+FINAL_NUMPY=$(python3 -c "import numpy; print(numpy.__version__)")
+echo "NumPy version: $FINAL_NUMPY"
 
-# If only CPU version exists, replace it
-if pip list | grep -q "^onnxruntime " && ! pip list | grep -q "onnxruntime-gpu"; then
-    print_warning "CPU onnxruntime was installed by a dependency, removing..."
-    pip uninstall -y onnxruntime
-    pip install onnxruntime-gpu==1.18.0
+if [[ "$FINAL_NUMPY" == 2.* ]]; then
+    print_error "NumPy was upgraded to 2.x by a dependency!"
+    print_warning "Downgrading back to 1.x..."
+    pip install --force-reinstall "numpy>=1.24.0,<2.0.0"
+    FINAL_NUMPY=$(python3 -c "import numpy; print(numpy.__version__)")
+    print_status "NumPy downgraded to $FINAL_NUMPY"
 fi
-
-print_status "ONNX Runtime check complete"
 
 # Step 11: Download InsightFace models
 echo ""
@@ -289,8 +294,7 @@ echo ""
 echo "Step 12: Final GPU verification..."
 echo "------------------------------------------------------------"
 
-# Create a Python script that properly sets up the environment
-python3 << EOF
+python3 << 'EOF'
 import os
 import sys
 import site
@@ -311,6 +315,13 @@ print("=" * 60)
 print("GPU VERIFICATION - FINAL")
 print("=" * 60)
 
+# Check NumPy version first
+import numpy as np
+print(f"\nNumPy version: {np.__version__}")
+if np.__version__.startswith('2.'):
+    print("[ERROR] NumPy 2.x detected! This will cause crashes!")
+    sys.exit(1)
+
 onnx_gpu_ok = False
 tf_gpu_ok = False
 
@@ -324,10 +335,9 @@ try:
         print("   [OK] CUDA provider available")
         onnx_gpu_ok = True
     else:
-        print("   [INFO] CUDA not available - InsightFace will use CPU")
-        print("   (TensorFlow GPU will still be used for DeepFace)")
+        print("   [WARNING] CUDA not available")
 except Exception as e:
-    print(f"   [WARNING] {e}")
+    print(f"   [ERROR] {e}")
 
 # 2. TensorFlow GPU
 print("\n2. TensorFlow GPU (DeepFace):")
@@ -355,7 +365,7 @@ try:
     else:
         app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
         app.prepare(ctx_id=-1, det_size=(640, 640))
-        print("   [OK] Initialized with CPU (still functional)")
+        print("   [OK] Initialized with CPU")
 except Exception as e:
     print(f"   [ERROR] {e}")
 
@@ -367,36 +377,22 @@ try:
 except Exception as e:
     print(f"   [ERROR] {e}")
 
-# 5. RetinaFace
-print("\n5. RetinaFace:")
-try:
-    from retinaface import RetinaFace
-    print("   [OK] Imported")
-except Exception as e:
-    print(f"   [ERROR] {e}")
-
-# 6. NudeNet
-print("\n6. NudeNet:")
-try:
-    from nudenet import NudeDetector
-    print("   [OK] Imported")
-except Exception as e:
-    print(f"   [ERROR] {e}")
-
 # Summary
 print("\n" + "=" * 60)
 print("SUMMARY")
 print("=" * 60)
+print(f"  - NumPy Version: {np.__version__}")
 print(f"  - ONNX Runtime (InsightFace): {'GPU' if onnx_gpu_ok else 'CPU'}")
 print(f"  - TensorFlow (DeepFace): {'GPU' if tf_gpu_ok else 'CPU'}")
 
-if tf_gpu_ok:
-    print("\n[OK] TensorFlow GPU is working - DeepFace heavy computation on GPU")
-    if not onnx_gpu_ok:
-        print("[INFO] InsightFace on CPU is still fast (~50-100ms per image)")
-    print("\nSystem is ready for production!")
+if onnx_gpu_ok and tf_gpu_ok:
+    print("\n[SUCCESS] All GPU acceleration working!")
+    print("System is ready for production!")
+elif tf_gpu_ok:
+    print("\n[PARTIAL] TensorFlow GPU working, InsightFace on CPU")
+    print("System is ready for production (InsightFace is still fast on CPU)")
 else:
-    print("\n[FAIL] TensorFlow GPU not available - this is critical!")
+    print("\n[FAIL] GPU acceleration not available")
     sys.exit(1)
 EOF
 
@@ -405,34 +401,30 @@ echo ""
 echo "Step 13: Creating production startup script..."
 echo "------------------------------------------------------------"
 
-# Get site packages path
-SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
-
-cat > run_gpu_final.sh << RUNSCRIPT
+cat > run_gpu.sh << 'RUNSCRIPT'
 #!/bin/bash
 # Production startup script - ensures GPU is used
-# Auto-generated by setup_gpu_final.sh
 
-SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
-cd "\$SCRIPT_DIR"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
 
 # Activate venv
 source venv/bin/activate
 
 # Set up NVIDIA pip package library paths (CRITICAL for ONNX Runtime GPU)
-SITE_PACKAGES=\$(python3 -c "import site; print(site.getsitepackages()[0])")
+SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
 NVIDIA_LIBS=""
 for pkg in cuda_runtime cudnn cublas cufft curand cusolver cusparse nccl; do
-    PKG_LIB="\$SITE_PACKAGES/nvidia/\${pkg}/lib"
-    if [ -d "\$PKG_LIB" ]; then
-        NVIDIA_LIBS="\${NVIDIA_LIBS}:\${PKG_LIB}"
+    PKG_LIB="$SITE_PACKAGES/nvidia/${pkg}/lib"
+    if [ -d "$PKG_LIB" ]; then
+        NVIDIA_LIBS="${NVIDIA_LIBS}:${PKG_LIB}"
     fi
 done
-export LD_LIBRARY_PATH="\${NVIDIA_LIBS#:}:\$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="${NVIDIA_LIBS#:}:$LD_LIBRARY_PATH"
 
 # Also add system CUDA if available
 if [ -d "/usr/local/cuda/lib64" ]; then
-    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:\$LD_LIBRARY_PATH"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
 fi
 
 # TensorFlow settings
@@ -444,20 +436,20 @@ export CUDA_VISIBLE_DEVICES=0
 echo "============================================================"
 echo "Starting Photo Validation API - PRODUCTION MODE"
 echo "============================================================"
-echo "GPU: \$(nvidia-smi --query-gpu=name --format=csv,noheader)"
-echo "CUDA Libs: \${NVIDIA_LIBS#:}"
+echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
+echo "NumPy: $(python3 -c 'import numpy; print(numpy.__version__)')"
 echo "============================================================"
 
 # Run with uvicorn
-exec uvicorn api_hybrid:app \\
-    --host 0.0.0.0 \\
-    --port 8000 \\
-    --workers 1 \\
-    --log-level info \\
+exec uvicorn api_hybrid:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info \
     --timeout-keep-alive 30
 RUNSCRIPT
 
-chmod +x run_gpu_final.sh
+chmod +x run_gpu.sh
 print_status "Production startup script created"
 
 # Create temp directory
@@ -470,12 +462,8 @@ echo "============================================================"
 echo -e "${GREEN}SETUP COMPLETE${NC}"
 echo "============================================================"
 echo ""
-echo "GPU Status:"
-echo "  - TensorFlow (DeepFace): GPU - Heavy computation on GPU"
-echo "  - InsightFace: Check verification output above"
-echo ""
 echo "To start the production server:"
-echo "  ./run_gpu_final.sh"
+echo "  ./run_gpu.sh"
 echo ""
 echo "API endpoints:"
 echo "  - Health: http://0.0.0.0:8000/health"
