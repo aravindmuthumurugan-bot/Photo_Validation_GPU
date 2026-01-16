@@ -1,0 +1,49 @@
+# GPU-enabled requirements for NVIDIA L40S with CUDA 12.4
+# Python 3.12.3 compatible
+
+# Core ML/DL frameworks - GPU enabled
+tensorflow[and-cuda]==2.18.0
+# Note: TensorFlow 2.18+ includes CUDA support via pip
+
+# ONNX Runtime with GPU support (for InsightFace)
+onnxruntime-gpu==1.20.1
+
+# Face Analysis Libraries
+insightface==0.7.3
+deepface==0.0.93
+retina-face==0.0.17
+mtcnn==1.0.0
+
+# NSFW Detection
+nudenet==3.4.2
+
+# Computer Vision
+opencv-python-headless==4.10.0.84
+opencv-contrib-python-headless==4.10.0.84
+
+# Web Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.3
+
+# Image Processing
+pillow==11.0.0
+scikit-image==0.24.0
+albumentations==1.4.21
+
+# Data Processing
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.14.1
+
+# Utilities
+requests==2.32.3
+tqdm==4.67.1
+gdown==5.2.0
+PyYAML==6.0.2
+python-dotenv==1.0.1
+
+# Additional dependencies
+protobuf==5.28.3
+onnx==1.17.0
