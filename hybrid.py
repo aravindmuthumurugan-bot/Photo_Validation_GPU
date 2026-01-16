@@ -1,6 +1,7 @@
 # ==================== GPU CONFIGURATION (MUST BE FIRST) ====================
 import os
 import sys
+import site
 
 # Set environment variables BEFORE any imports
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TF logging
@@ -13,6 +14,23 @@ if 'CUDA_HOME' not in os.environ:
         os.environ['CUDA_HOME'] = '/usr/local/cuda'
     elif os.path.exists('/usr/local/cuda-12.0'):
         os.environ['CUDA_HOME'] = '/usr/local/cuda-12.0'
+
+# ==================== CRITICAL: Set NVIDIA pip package library paths ====================
+# This allows onnxruntime-gpu to find CUDA libraries installed via pip
+# MUST be done BEFORE importing onnxruntime
+try:
+    site_packages = site.getsitepackages()[0]
+    nvidia_libs = []
+    for pkg in ['cuda_runtime', 'cudnn', 'cublas', 'cufft', 'curand', 'cusolver', 'cusparse', 'nccl']:
+        lib_path = os.path.join(site_packages, 'nvidia', pkg, 'lib')
+        if os.path.exists(lib_path):
+            nvidia_libs.append(lib_path)
+
+    if nvidia_libs:
+        current_ld = os.environ.get('LD_LIBRARY_PATH', '')
+        os.environ['LD_LIBRARY_PATH'] = ':'.join(nvidia_libs) + ':' + current_ld
+except Exception:
+    pass  # Continue without pip nvidia libs - will use system CUDA if available
 
 # Standard imports
 import cv2
