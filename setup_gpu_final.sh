@@ -94,9 +94,19 @@ export LD_LIBRARY_PATH="${NVIDIA_LIB_PATH}:${LD_LIBRARY_PATH}"
 print_status "LD_LIBRARY_PATH updated with NVIDIA pip packages"
 echo "  NVIDIA libs: $NVIDIA_LIB_PATH"
 
-# Step 4: Install ONNX Runtime GPU
+# Step 4: Install NumPy 1.x FIRST (required for onnxruntime-gpu 1.18.0)
 echo ""
-echo "Step 4: Installing ONNX Runtime GPU..."
+echo "Step 4: Installing NumPy 1.x (onnxruntime-gpu compatibility)..."
+echo "------------------------------------------------------------"
+
+# onnxruntime-gpu 1.18.0 was compiled with NumPy 1.x and crashes with NumPy 2.x
+pip install "numpy>=1.26.0,<2.0.0"
+
+print_status "NumPy 1.x installed"
+
+# Step 5: Install ONNX Runtime GPU
+echo ""
+echo "Step 5: Installing ONNX Runtime GPU..."
 echo "------------------------------------------------------------"
 
 # Use version 1.18.0 which has good CUDA 12 support
@@ -160,9 +170,9 @@ fi
 
 print_status "ONNX Runtime GPU installation complete"
 
-# Step 5: Install TensorFlow with GPU support
+# Step 6: Install TensorFlow with GPU support
 echo ""
-echo "Step 5: Installing TensorFlow..."
+echo "Step 6: Installing TensorFlow..."
 echo "------------------------------------------------------------"
 
 pip install tensorflow==2.16.2
@@ -170,18 +180,18 @@ pip install tf-keras
 
 print_status "TensorFlow installed"
 
-# Step 6: Install InsightFace
+# Step 7: Install InsightFace
 echo ""
-echo "Step 6: Installing InsightFace..."
+echo "Step 7: Installing InsightFace..."
 echo "------------------------------------------------------------"
 
 pip install insightface==0.7.3
 
 print_status "InsightFace installed"
 
-# Step 7: Install face detection/analysis libraries WITHOUT onnxruntime dependency
+# Step 8: Install face detection/analysis libraries WITHOUT onnxruntime dependency
 echo ""
-echo "Step 7: Installing face detection libraries (--no-deps)..."
+echo "Step 8: Installing face detection libraries (--no-deps)..."
 echo "------------------------------------------------------------"
 
 # DeepFace - install without deps to avoid CPU onnxruntime
@@ -202,9 +212,9 @@ pip install pillow
 
 print_status "Face detection libraries installed"
 
-# Step 8: Install remaining dependencies
+# Step 9: Install remaining dependencies
 echo ""
-echo "Step 8: Installing remaining dependencies..."
+echo "Step 9: Installing remaining dependencies..."
 echo "------------------------------------------------------------"
 
 pip install \
@@ -219,8 +229,8 @@ pip install \
     python-multipart==0.0.20 \
     pydantic
 
+# Note: numpy already installed in Step 4, don't override with version 2.x
 pip install \
-    numpy==1.26.4 \
     pandas==2.2.3 \
     scipy==1.14.1 \
     requests==2.32.3 \
@@ -236,9 +246,9 @@ pip install \
 
 print_status "All dependencies installed"
 
-# Step 9: Ensure onnxruntime-gpu is intact (fix any overwrites)
+# Step 10: Ensure onnxruntime-gpu is intact (fix any overwrites)
 echo ""
-echo "Step 9: Ensuring onnxruntime-gpu is intact..."
+echo "Step 10: Ensuring onnxruntime-gpu is intact..."
 echo "------------------------------------------------------------"
 
 # Check if CPU version was installed by any dependency
@@ -254,9 +264,9 @@ fi
 
 print_status "ONNX Runtime check complete"
 
-# Step 10: Download InsightFace models
+# Step 11: Download InsightFace models
 echo ""
-echo "Step 10: Downloading InsightFace models..."
+echo "Step 11: Downloading InsightFace models..."
 echo "------------------------------------------------------------"
 
 python3 << 'EOF'
@@ -274,9 +284,9 @@ EOF
 
 print_status "Models downloaded"
 
-# Step 11: Final verification
+# Step 12: Final verification
 echo ""
-echo "Step 11: Final GPU verification..."
+echo "Step 12: Final GPU verification..."
 echo "------------------------------------------------------------"
 
 # Create a Python script that properly sets up the environment
@@ -390,9 +400,9 @@ else:
     sys.exit(1)
 EOF
 
-# Step 12: Create production startup script
+# Step 13: Create production startup script
 echo ""
-echo "Step 12: Creating production startup script..."
+echo "Step 13: Creating production startup script..."
 echo "------------------------------------------------------------"
 
 # Get site packages path
