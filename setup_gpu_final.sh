@@ -100,7 +100,7 @@ echo "Step 4: Installing NumPy 1.x (onnxruntime-gpu compatibility)..."
 echo "------------------------------------------------------------"
 
 # onnxruntime-gpu 1.18.0 was compiled with NumPy 1.x and crashes with NumPy 2.x
-pip install "numpy>=1.26.0,<2.0.0"
+pip install numpy==1.26.0
 
 print_status "NumPy 1.x installed"
 
