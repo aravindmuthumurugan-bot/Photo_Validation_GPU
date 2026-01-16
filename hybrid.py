@@ -1,9 +1,85 @@
-import cv2
+# ==================== GPU CONFIGURATION (MUST BE FIRST) ====================
 import os
+import sys
+
+# Set environment variables BEFORE any imports
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TF logging
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN warnings
+
+# Set CUDA paths if not already set
+if 'CUDA_HOME' not in os.environ:
+    if os.path.exists('/usr/local/cuda'):
+        os.environ['CUDA_HOME'] = '/usr/local/cuda'
+    elif os.path.exists('/usr/local/cuda-12.0'):
+        os.environ['CUDA_HOME'] = '/usr/local/cuda-12.0'
+
+# Standard imports
+import cv2
 import numpy as np
 import base64
 import tempfile
 from typing import Dict, List, Tuple, Optional
+
+# ==================== GPU STATUS TRACKING ====================
+GPU_AVAILABLE = False
+GPU_NAME = "CPU"
+ONNX_GPU_AVAILABLE = False
+TF_GPU_AVAILABLE = False
+
+# ==================== ONNX RUNTIME GPU (for InsightFace) ====================
+print("=" * 60)
+print("INITIALIZING GPU CONFIGURATION")
+print("=" * 60)
+
+try:
+    import onnxruntime as ort
+    providers = ort.get_available_providers()
+    print(f"ONNX Runtime providers: {providers}")
+
+    if 'CUDAExecutionProvider' in providers:
+        ONNX_GPU_AVAILABLE = True
+        ONNX_PROVIDERS = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        print("[OK] ONNX Runtime: CUDA provider available")
+    else:
+        ONNX_PROVIDERS = ['CPUExecutionProvider']
+        print("[WARNING] ONNX Runtime: CUDA not available, using CPU")
+except ImportError:
+    ONNX_PROVIDERS = ['CPUExecutionProvider']
+    print("[WARNING] ONNX Runtime not installed")
+except Exception as e:
+    ONNX_PROVIDERS = ['CPUExecutionProvider']
+    print(f"[WARNING] ONNX Runtime error: {e}")
+
+# ==================== TENSORFLOW GPU (for DeepFace) ====================
+import tensorflow as tf
+
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        TF_GPU_AVAILABLE = True
+        GPU_NAME = tf.config.experimental.get_device_details(gpus[0]).get('device_name', 'NVIDIA GPU')
+        print(f"[OK] TensorFlow GPU: {GPU_NAME}")
+        print(f"[OK] Number of GPUs: {len(gpus)}")
+    except RuntimeError as e:
+        print(f"[WARNING] TensorFlow GPU config error: {e}")
+else:
+    print("[WARNING] TensorFlow: No GPU detected")
+
+# Set overall GPU status
+GPU_AVAILABLE = ONNX_GPU_AVAILABLE or TF_GPU_AVAILABLE
+
+print(f"\nGPU Status Summary:")
+print(f"  - ONNX Runtime (InsightFace): {'GPU' if ONNX_GPU_AVAILABLE else 'CPU'}")
+print(f"  - TensorFlow (DeepFace): {'GPU' if TF_GPU_AVAILABLE else 'CPU'}")
+print(f"  - Overall GPU Available: {GPU_AVAILABLE}")
+print("=" * 60)
+
+# ==================== IMPORT ML LIBRARIES ====================
+# Import after GPU configuration
+
 from retinaface import RetinaFace
 from nudenet import NudeDetector
 
@@ -14,71 +90,6 @@ from insightface.model_zoo import get_model
 
 # DeepFace imports (AGE & ETHNICITY ONLY)
 from deepface import DeepFace
-
-# ==================== GPU CONFIGURATION (CRITICAL) ====================
-import os
-import sys
-
-# Set environment variables BEFORE importing TensorFlow
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TF logging
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
-# TensorFlow GPU configuration
-import tensorflow as tf
-
-# Configure GPU memory growth to prevent OOM
-gpus = tf.config.experimental.list_physical_devices('GPU')
-GPU_AVAILABLE = False
-GPU_NAME = "CPU"
-
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        # Optionally limit GPU memory usage (uncomment if needed)
-        # tf.config.set_logical_device_configuration(
-        #     gpus[0],
-        #     [tf.config.LogicalDeviceConfiguration(memory_limit=8192)]  # 8GB limit
-        # )
-        GPU_AVAILABLE = True
-        GPU_NAME = tf.config.experimental.get_device_details(gpus[0]).get('device_name', 'GPU')
-        print(f"TensorFlow GPU configured: {GPU_NAME}")
-        print(f"Number of GPUs available: {len(gpus)}")
-    except RuntimeError as e:
-        print(f"TensorFlow GPU configuration error: {e}")
-        GPU_AVAILABLE = False
-else:
-    print("No TensorFlow GPU devices found")
-
-# ONNX Runtime GPU configuration (for InsightFace)
-try:
-    import onnxruntime as ort
-    providers = ort.get_available_providers()
-    print(f"ONNX Runtime providers: {providers}")
-
-    if 'CUDAExecutionProvider' in providers:
-        GPU_AVAILABLE = True
-        # Set ONNX Runtime to use GPU with optimized settings
-        ONNX_PROVIDERS = [
-            ('CUDAExecutionProvider', {
-                'device_id': 0,
-                'arena_extend_strategy': 'kNextPowerOfTwo',
-                'gpu_mem_limit': 8 * 1024 * 1024 * 1024,  # 8GB limit
-                'cudnn_conv_algo_search': 'EXHAUSTIVE',
-                'do_copy_in_default_stream': True,
-            }),
-            'CPUExecutionProvider'
-        ]
-        print(f"GPU Available: CUDA (ONNX Runtime)")
-    else:
-        ONNX_PROVIDERS = ['CPUExecutionProvider']
-        print("ONNX Runtime: Running on CPU")
-except ImportError:
-    ONNX_PROVIDERS = ['CPUExecutionProvider']
-    print("ONNX Runtime not available")
-except Exception as e:
-    ONNX_PROVIDERS = ['CPUExecutionProvider']
-    print(f"ONNX Runtime GPU detection error: {e}")
 
 
 # ==================== STAGE 1 CONFIGURATION ====================
@@ -135,47 +146,42 @@ PRIMARY_PERSON_MATCH_THRESHOLD = 0.50
 
 # ==================== INSIGHTFACE INITIALIZATION (BACKBONE) ====================
 
-print("Initializing InsightFace (BACKBONE)...")
-print(f"Using providers: {ONNX_PROVIDERS}")
+print("\nInitializing InsightFace (BACKBONE)...")
+print(f"Using ONNX providers: {ONNX_PROVIDERS}")
 
 try:
-    if GPU_AVAILABLE:
-        # Use optimized GPU providers
+    # Use ONNX_GPU_AVAILABLE specifically for InsightFace
+    if ONNX_GPU_AVAILABLE:
+        print("Attempting InsightFace GPU initialization...")
         app = FaceAnalysis(
             name='buffalo_l',
             providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
         )
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        print("[OK] InsightFace initialized with GPU (CUDAExecutionProvider)")
     else:
+        print("InsightFace falling back to CPU...")
         app = FaceAnalysis(
             name='buffalo_l',
             providers=['CPUExecutionProvider']
         )
-
-    # ctx_id: 0 = first GPU, -1 = CPU
-    app.prepare(ctx_id=0 if GPU_AVAILABLE else -1, det_size=(640, 640))
-    print(f"InsightFace FaceAnalysis initialized (GPU: {GPU_AVAILABLE})")
+        app.prepare(ctx_id=-1, det_size=(640, 640))
+        print("[OK] InsightFace initialized with CPU")
 
 except Exception as e:
-    print(f"InsightFace initialization error: {e}")
+    print(f"[WARNING] InsightFace GPU init failed: {e}")
     print("Falling back to CPU mode...")
     app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
     app.prepare(ctx_id=-1, det_size=(640, 640))
+    print("[OK] InsightFace initialized with CPU (fallback)")
 
-# Initialize recognition model for face comparison
-print("Loading InsightFace recognition model...")
-try:
-    if GPU_AVAILABLE:
-        recognition_model = get_model(
-            'buffalo_l',
-            providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
-        )
-    else:
-        recognition_model = get_model('buffalo_l', providers=['CPUExecutionProvider'])
-except Exception as e:
-    print(f"Recognition model load error: {e}")
-    recognition_model = get_model('buffalo_l', providers=['CPUExecutionProvider'])
+# Note: recognition_model is not used in current code - FaceAnalysis handles embeddings
+# Keeping for backward compatibility but not initializing to save memory
+recognition_model = None
 
-print(f"InsightFace initialized successfully (GPU: {GPU_AVAILABLE}, Device: {GPU_NAME})")
+print(f"\nInsightFace Status:")
+print(f"  - Mode: {'GPU' if ONNX_GPU_AVAILABLE else 'CPU'}")
+print(f"  - Device: {GPU_NAME}")
 
 
 # ==================== DEEPFACE CONFIGURATION (AGE & ETHNICITY ONLY) ====================

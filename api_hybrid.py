@@ -15,7 +15,13 @@ import numpy as np
 import time
 
 # Import the HYBRID validation system
-from hybrid import validate_photo_complete_hybrid, GPU_AVAILABLE, GPU_NAME
+from hybrid import (
+    validate_photo_complete_hybrid,
+    GPU_AVAILABLE,
+    GPU_NAME,
+    ONNX_GPU_AVAILABLE,
+    TF_GPU_AVAILABLE
+)
 
 # ==================== FASTAPI APP SETUP ====================
 
@@ -1013,6 +1019,12 @@ async def health_check():
             "deepface": "loaded",
             "gpu_available": GPU_AVAILABLE,
             "gpu_name": GPU_NAME
+        },
+        "gpu_details": {
+            "onnx_runtime_gpu": ONNX_GPU_AVAILABLE,
+            "tensorflow_gpu": TF_GPU_AVAILABLE,
+            "insightface_mode": "GPU" if ONNX_GPU_AVAILABLE else "CPU",
+            "deepface_mode": "GPU" if TF_GPU_AVAILABLE else "CPU"
         }
     }
 
